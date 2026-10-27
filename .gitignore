@@ -6,3 +6,5 @@ __pycache__/
 *.pt
 .DS_Store
 .venv-research/
+results/
+*.joblib
