@@ -3,6 +3,7 @@
 Run from the project root: python src/train.py
 """
 
+import argparse
 import hashlib
 import json
 import warnings
@@ -23,10 +24,10 @@ from sklearn.preprocessing import StandardScaler
 
 if __package__:
     from .dataset import FEATURE_COLUMNS
-    from .evaluate import binary_metrics, select_threshold
+    from .evaluate import binary_metrics, evaluate_binary, select_threshold
 else:
     from dataset import FEATURE_COLUMNS
-    from evaluate import binary_metrics, select_threshold
+    from evaluate import binary_metrics, evaluate_binary, select_threshold
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -73,7 +74,7 @@ def load_data(processed):
     return train, validation, int((joined.split == "test").sum())
 
 
-def fit_baselines(train, validation, feature_columns=FEATURE_COLUMNS):
+def fit_baselines(train, validation, feature_columns=FEATURE_COLUMNS, threshold_tie_break="closest_to_half", verbose=True):
     x_train, y_train = train[feature_columns], train.label
     x_validation, y_validation = validation[feature_columns], validation.label
     dummy = make_pipeline(DummyClassifier(strategy="most_frequent", random_state=SEED))
@@ -90,16 +91,64 @@ def fit_baselines(train, validation, feature_columns=FEATURE_COLUMNS):
         scores = model.predict_proba(x_validation)[:, 1]
         ap = float(average_precision_score(y_validation, scores))
         candidates.append({"C": c_value, **binary_metrics(y_validation, scores, 0.5)})
-        print(f"C={c_value:g}: validation average precision={ap:.4f}", flush=True)
+        if verbose:
+            print(f"C={c_value:g}: validation average precision={ap:.4f}", flush=True)
         if ap > best_ap:  # Ties keep the first (smallest C) model.
             best_model, best_ap, best_c = model, ap, c_value
 
     scores = best_model.predict_proba(x_validation)[:, 1]
-    threshold = select_threshold(y_validation, scores)
+    threshold = select_threshold(y_validation, scores, tie_break=threshold_tie_break)
     return {"dummy": dummy, "logistic_regression": best_model}, candidates, best_c, threshold
 
 
-def main():
+def train_baselines(frame, features, output):
+    """Custom-table API: one participant per row and an explicit feature list."""
+    required = {"participant_key", "label", "split", *features}
+    if not features or len(features) != len(set(features)) or not required.issubset(frame.columns):
+        raise ValueError("Supply unique feature names and all required table columns.")
+    forbidden = {"participant_key", "participant_id", "label", "split", "subset", "gender",
+                 "timestamp", "frame", "confidence", "success", "visual_path", "n_frames"}
+    if forbidden.intersection(features):
+        raise ValueError("Metadata cannot be model features.")
+    if frame.participant_key.isna().any() or frame.participant_key.duplicated().any():
+        raise ValueError("Expected one row per participant across all splits.")
+    if not frame.label.isin([0, 1]).all() or not frame.split.isin(["train", "validation", "test"]).all():
+        raise ValueError("Expected binary labels and train/validation/test split values.")
+    train = frame.loc[frame.split == "train"].copy()
+    validation = frame.loc[frame.split == "validation"].copy()
+    if train.label.nunique() != 2 or validation.label.nunique() != 2:
+        raise ValueError("Train and validation must each contain both classes.")
+    for group in (train, validation):
+        for feature in features:
+            group[feature] = pd.to_numeric(group[feature], errors="raise").replace([np.inf, -np.inf], np.nan)
+    if train[features].isna().all().any():
+        raise ValueError("A feature has no observed training values.")
+    models, candidates, c_value, threshold = fit_baselines(
+        train, validation, features, threshold_tie_break="higher", verbose=False
+    )
+    pipeline = models["logistic_regression"]
+    scores = pipeline.predict_proba(validation[features])[:, 1]
+    dummy_scores = models["dummy"].predict_proba(validation[features])[:, 1]
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"pipeline": pipeline, "features": features, "threshold": threshold, "C": c_value}, output / "baseline.joblib")
+    joblib.dump(models["dummy"], output / "dummy.joblib")
+    frame[["participant_key", "split"]].to_csv(output / "splits.csv", index=False)
+    predictions = validation[[col for col in ("participant_key", "label", "subset", "gender") if col in validation]].copy()
+    predictions["score"] = scores
+    predictions.to_csv(output / "validation_predictions.csv", index=False)
+    report = {
+        "selected_C": c_value, "selection_metric": "validation average precision",
+        "threshold_tie_break": "higher", "test_evaluated": False,
+        "candidates": [{"C": item["C"], "average_precision": item["average_precision"]} for item in candidates],
+        "dummy": evaluate_binary(validation.label, dummy_scores),
+        "logistic_regression": evaluate_binary(validation.label, scores, threshold),
+    }
+    (output / "validation_metrics.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    return report
+
+
+def run_project_baseline():
     processed = PROJECT / "data" / "processed"
     train, validation, test_count = load_data(processed)
     print(f"Training: {len(train)}; validation: {len(validation)}; test reserved: {test_count}")
@@ -167,6 +216,26 @@ def main():
               f"specificity={result['specificity']:.4f}")
     print(f"\nSaved models: {model_dir}\nSaved validation results: {results_dir}")
     print("The test set has not been evaluated.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("table", nargs="?", type=Path, help="Optional combined participant/label/split/feature CSV")
+    parser.add_argument("--features", type=Path, help="JSON feature list, required for a custom table")
+    parser.add_argument("--output", type=Path, help="Custom-table output folder (default: results/custom_baseline)")
+    args = parser.parse_args()
+    if args.table is None:
+        if args.features is not None or args.output is not None:
+            parser.error("--features and --output require a custom table path")
+        run_project_baseline()
+    else:
+        if args.features is None:
+            parser.error("A custom table requires --features")
+        report = train_baselines(
+            pd.read_csv(args.table), json.loads(args.features.read_text()),
+            args.output or PROJECT / "results" / "custom_baseline",
+        )
+        print(json.dumps(report, indent=2, allow_nan=False))
 
 
 if __name__ == "__main__":
