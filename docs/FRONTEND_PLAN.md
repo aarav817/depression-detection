@@ -1,106 +1,103 @@
-This is a simple frontend plan for your December 2, 2026 presentation. One teammate finishes the model; the other builds the interface using this repository. The frontend agent already has the codebase and should inspect it directly.
+Build one local Streamlit page with this flow: upload a video → click Analyze → display the saved model's result. No charts, sample selectors, training controls, or model explanations on the main screen.
 
-1. **Build one Streamlit page.**
+1. **Get OpenFace working first.**
 
-   The demo should let you select a participant example, see a facial-movement chart, click Analyze, and compare the prediction with the dataset label. Use the current logistic-regression model immediately. Add the final model only when the model teammate has a working way to load it and predict.
+   OpenFace's `FeatureExtraction` executable converts video into the AU measurements used by this project. It is a separate installed program with model files, not simply a Python import. It was not found on the current shell's PATH when this plan was written; check whether it is installed elsewhere.
 
-   Use Python and Streamlit. No JavaScript, separate API, database, login, deployment service, or webcam feature is needed. Run the app locally on the presentation laptop.
+   Install/build it using its [Ubuntu/Unix instructions](https://github.com/TadasBaltrusaitis/OpenFace/wiki/Unix-Installation) or [Mac instructions](https://github.com/TadasBaltrusaitis/OpenFace/wiki/Mac-Installation). These guides are older, so the build may need adjustments for the actual computer. This is the main setup dependency and may take longer than the frontend itself.
 
-   **Finished product:** one attractive page that demonstrates a real prediction reliably in a 5–7 minute presentation.
+   Run a small MP4 containing one clearly visible face through it before connecting the UI:
 
-2. **Divide the work between the two teammates.**
+   ```bash
+   /absolute/path/to/FeatureExtraction -f /absolute/path/to/input.mp4 -out_dir /absolute/path/to/output -aus
+   ```
 
-   | Model teammate | Frontend teammate |
-   |---|---|
-   | Finish training and testing | Build the Streamlit page |
-   | Save the final model and preprocessing | Load and use the saved model |
-   | Confirm how to make one prediction | Show the prediction clearly |
-   | Supply the final performance numbers | Display those numbers with the correct validation/test label |
+   Use the executable's working installation directory if it needs relative model paths. Confirm it creates a readable CSV with `success` and the 17 AU intensity columns expected in `src/dataset.py`. Record the executable path and working directory that succeeded. Match extraction settings to the dataset's documented settings where available; do not assume matching column names alone establishes identical measurements.
 
-   The frontend teammate can start now with the existing baseline. Both teammates should agree before editing the same source file. Keep frontend work on a `frontend-demo` Git branch until it works.
+   **Checkpoint:** one real video produces a compatible CSV. [OpenFace command reference](https://github.com/TadasBaltrusaitis/OpenFace/wiki/Command-line-arguments).
 
-3. **Have the frontend agent inspect the existing code.**
-
-   Tell the agent to read these files before writing the app:
-
-   | Existing file | What the frontend can reuse |
-   |---|---|
-   | `src/dataset.py` | `summarize_visual()` converts one visual CSV into the 68 baseline features and a quality report |
-   | `src/train.py` | Shows how the saved model is structured and how scores become labels |
-   | `data/processed/manifest.csv` | Links participants, labels, and visual CSV paths |
-   | `data/processed/splits.csv` | Identifies validation examples |
-   | `models/baseline/logistic_regression.joblib` | The trained baseline and its preprocessing, feature order, and threshold |
-   | `results/baseline/validation_metrics.json` | Actual validation results for the performance panel |
-
-   The agent should check which data and model files are present on its machine. They are ignored by Git, so having the source repository alone does not guarantee these local files exist. If needed, the model teammate can share the saved model and a few example CSVs. There is no need to redownload the entire dataset for the frontend.
-
-   **Checkpoint:** identify an available model and at least one example CSV before connecting predictions.
-
-4. **Set up Streamlit and make a page appear.**
-
-   Open the project in VS Code, open its terminal, and activate the existing environment:
+2. **Install Streamlit in the existing project environment.**
 
    ```bash
    source .venv-research/bin/activate
    python -m pip install streamlit
    ```
 
-   Create `requirements-frontend.txt`:
+   Create `requirements-frontend.txt` containing:
 
    ```text
    -r requirements.txt
    streamlit
    ```
 
-   On a machine that still needs the project packages, use:
+   The existing project dependencies already provide pandas and joblib. Use compatible versions for loading the saved scikit-learn artifact. The first version should use `models/baseline/logistic_regression.joblib`; no GRU integration is required.
 
-   ```bash
-   python -m pip install -r requirements-frontend.txt
-   ```
+3. **Create a single `app.py` in the repository root.**
 
-   Create `app.py` in the project root:
+   Start with a title, a video uploader, optional preview, and an Analyze button:
 
    ```python
    import streamlit as st
 
-   st.set_page_config(page_title="Facial Movement Classifier", layout="wide")
-   st.title("Facial Movement Classifier")
-   st.caption("A student project using facial-movement measurements.")
-   st.info("Choose an example and run the model.")
+   st.set_page_config(page_title="Facial Video Analysis", layout="centered")
+   st.title("Facial Video Analysis")
+   uploaded = st.file_uploader("Upload a video", type=["mp4"])
+   if uploaded is not None:
+       st.video(uploaded.getvalue())
+   analyze = st.button("Analyze video", disabled=uploaded is None)
    ```
 
-   Start it from the project directory:
+   Start with MP4 videos, preferably H.264 for browser playback. A file extension filter does not guarantee valid or decodable video; handle extraction failures below. Streamlit provides both the [uploader](https://docs.streamlit.io/develop/api-reference/widgets/st.file_uploader) and [video preview](https://docs.streamlit.io/develop/api-reference/media/st.video).
 
-   ```bash
-   python -m streamlit run app.py
+4. **Add one helper function for the analysis.**
+
+   Keep it in `app.py`: `analyze_video(video_bytes)`.
+
+   Inside the function, create a `tempfile.TemporaryDirectory`, write the upload to a fixed filename such as `input.mp4`, and create an output folder. Run OpenFace through `subprocess.run()` using an argument list, `check=True`, captured output, and a timeout. Do not build a shell command from the uploaded filename. Use absolute paths and the working directory verified in step 1.
+
+   For example, the arguments are:
+
+   ```python
+   [openface_bin, "-f", str(video_path), "-out_dir", str(output_dir), "-aus"]
    ```
 
-   Open the local address printed in the terminal, normally `http://localhost:8501`. Keep the terminal running. Press Ctrl+C to stop the app. These commands work on Ubuntu/WSL and Mac with the environment installed.
+   Start with a 120-second processing timeout and a 50 MB upload limit; these are demo resource limits, not evidence that a video is scientifically suitable. Check that the expected CSV was actually created. Finish reading/extracting it inside the temporary-directory block so it is not deleted too early. The directory then cleans up automatically.
 
-   **Checkpoint:** the page opens in your browser. Do not move on until this works.
+5. **Reuse the existing feature extraction and saved model.**
 
-5. **Make the page look clean.**
+   After OpenFace creates the CSV, use:
 
-   Use this layout:
+   ```python
+   import joblib
+   import pandas as pd
+   from src.dataset import summarize_visual
 
-   ```text
-   Facial Movement Classifier
-   A short explanation of what the project does.
-
-   Choose example: [Sample A v]       Facial movements over time
-   [ Analyze sample ]                [simple line chart]
-
-   [ Predicted class ]   [ Model score ]   [ Valid frames ]
-
-   [ Reveal dataset label ]
-
-   Model performance
-   [Small comparison table]
-
-   [How it works — expandable]
+   artifact = joblib.load(model_path)
+   features, quality = summarize_visual(csv_path)
    ```
 
-   Use `st.columns()` for the input/chart layout and result cards, `st.selectbox()` for samples, `st.button()` for actions, `st.metric()` for numerical results, and `st.expander()` for details. Start with one model; a model selector is optional if both models are ready.
+   If extraction is excluded or fewer than two successfully tracked frames exist, return an understandable error and no model result. Preserve any other quality warnings. Build the model input in its saved column order:
+
+   ```python
+   inputs = pd.DataFrame([features])[artifact["feature_columns"]]
+   score = float(artifact["pipeline"].predict_proba(inputs)[0, 1])
+   threshold = float(artifact["threshold"])
+   prediction = int(score >= threshold)
+   ```
+
+   `model_path` should be resolved relative to `Path(__file__).resolve().parent`. Do not train, refit preprocessing, or pick a new threshold. Return the score, predicted dataset label, successful-frame count, elapsed time, and any warnings. There are no per-feature depression probabilities in this model.
+
+6. **Connect the button and show results.**
+
+   When Analyze is clicked, clear the old result, show `st.spinner("Analyzing video...")`, and call the helper. Display three or four small cards: predicted dataset label, model score, successfully tracked frames, and optionally processing time.
+
+   Format the score as `0.62 / 1.00`, not as a verified personal probability of depression. Use one small caption: `Experimental student model; newly recorded videos have not been independently validated.` No charts or technical panels are needed.
+
+   Store the result in `st.session_state` so it survives reruns. Identify the upload by a hash of its bytes; clear stored results and errors when the upload changes or is removed. Keep only completed numeric results in state, not paths to deleted temporary files.
+
+   Handle missing OpenFace/model files, an unreadable video, a timeout, missing output columns, and failed face tracking with short messages. An error must not leave a previous video's prediction visible. Never substitute invented output when extraction fails.
+
+7. **Apply a minimal theme and launch.**
 
    Create `.streamlit/config.toml`:
 
@@ -112,105 +109,21 @@ This is a simple frontend plan for your December 2, 2026 presentation. One teamm
    secondaryBackgroundColor = "#FFFFFF"
    textColor = "#172033"
    font = "sans serif"
+
+   [server]
+   maxUploadSize = 50
    ```
 
-   Keep the interface mostly white, with dark text and one teal accent. Use clear labels and generous spacing. Native Streamlit components and this theme are enough; custom CSS is optional. Use a system font so the page works without internet access.
-
-   **Checkpoint:** the page is readable at the resolution you will present at and does not feel crowded.
-
-6. **Add prepared examples and a movement chart.**
-
-   Use three or four validation examples from the existing manifest and splits. Name them Sample A, Sample B, and Sample C in the interface so the menu does not reveal the answer. Include an example the model gets wrong for discussion. Selected examples illustrate behavior; aggregate metrics describe performance.
-
-   When someone chooses an example, load its visual CSV with pandas and strip whitespace from column names. Use `st.line_chart()` to show a few AU intensity columns, such as AU01_r, AU12_r, and AU45_r. Use timestamp for the horizontal axis if it is valid; otherwise use frame number. Label the chart so the audience knows these are facial-movement measurements.
-
-   You do not need a face image or animation. The chart is a useful visual that directly reflects the model's input.
-
-   **Checkpoint:** selecting another example changes the chart and clears any previous prediction.
-
-7. **Connect the Analyze button to the real model.**
-
-   Reuse the current code instead of creating another backend. For the existing baseline, the logic is:
-
-   ```python
-   from pathlib import Path
-   import joblib
-   import pandas as pd
-   from src.dataset import summarize_visual
-
-   project = Path(__file__).resolve().parent
-   artifact = joblib.load(project / "models/baseline/logistic_regression.joblib")
-   features, quality = summarize_visual(selected_csv_path)
-
-   if features is None:
-       st.error("This sample does not contain enough usable facial measurements.")
-   else:
-       inputs = pd.DataFrame([features])[artifact["feature_columns"]]
-       score = float(artifact["pipeline"].predict_proba(inputs)[0, 1])
-       threshold = float(artifact["threshold"])
-       predicted_label = int(score >= threshold)
-   ```
-
-   This is the prediction logic to integrate into the button handler, not a complete standalone app. Resolve the selected CSV path from the project root as well.
-
-   The saved pipeline already contains preprocessing. Do not fit anything, retrain a model, or change its threshold in the app. Do not pass the dataset label into the prediction input. Show any quality warnings returned by the existing feature extractor.
-
-   Display the predicted dataset class, a score such as `0.62 / 1.00`, and the usable-frame count. Explain that the score is a model output, not a medical diagnosis or a verified probability of depression.
-
-   Cache the loaded model if useful, and restart the app when replacing model artifacts. Use `st.session_state` to keep the result visible after another button click. Clear the result when the example or model changes. A failed analysis must not leave an old prediction on screen.
-
-   Add Reveal dataset label after analysis, using the label from the manifest. Display whether the prediction matches it. Compare the app's output with the same sample run directly in Python to confirm the integration is correct.
-
-   **Checkpoint:** the app makes a genuine prediction and displays the correct corresponding label when requested.
-
-8. **Add a small model-performance panel.**
-
-   Read the existing results JSON and show dummy versus logistic regression using balanced accuracy, recall, and precision. Label the current numbers as Validation results. When the model teammate provides final test results, display those as Test results instead. Do not relabel validation results as test results or compare models evaluated on different groups without explaining that difference.
-
-   Use one short expandable explanation for what AUs are, how the model uses them, and one limitation. Avoid filling the screen with every metric or technical setting.
-
-   If the final GRU is ready, the model teammate supplies its checkpoint and working prediction code, including sequence preprocessing. The frontend teammate connects that code in place of or alongside the baseline. The 68-summary-feature path above is not the GRU input path. Do not delay a working demo for an unfinished GRU.
-
-   **Checkpoint:** the audience can understand what went in, what came out, and how the model performs overall.
-
-9. **Check the demo manually and fix obvious failures.**
-
-   Verify these cases:
-
-   - The app starts from a fresh terminal using the documented command.
-   - Every prepared example loads and produces the expected score/class.
-   - Clicking Reveal does not make the prediction disappear.
-   - Switching examples clears the old prediction and hidden-label state.
-   - Missing model/data files produce a useful message instead of a broken screen.
-   - The chart and result cards are readable on the presentation display.
-   - The app works without internet after installation and file transfer.
-   - No click starts model training or final test evaluation.
-
-   Run the existing test suite after integration:
+   Launch from the project root:
 
    ```bash
-   python -m unittest discover -s tests -v
+   python -m streamlit run app.py
    ```
 
-   A few frontend behavior tests are useful if easy to add, but do not build an elaborate testing framework for the demo. Run the app on both teammates' computers and rehearse on the actual presentation laptop.
+   Open the local URL printed in the terminal. The terminal must remain running. Ctrl+C stops the app. Native Streamlit widgets and this theme are enough for the first version.
 
-   **Checkpoint:** one teammate can demonstrate the project without the other operating a second terminal.
+8. **Check the complete flow once it works.**
 
-10. **Finish before the deadline and rehearse.**
+   Upload a valid video and confirm that the same OpenFace CSV gives the same score in the app and plain Python. Upload a second video and verify that the first result clears. Try a video without a visible face and an invalid file; both should show a useful error. Confirm Analyze is disabled without a file and no interaction retrains the model.
 
-   | Deadline | Deliverable |
-   |---|---|
-   | Nov 20 | Page opens and has the basic theme/layout |
-   | Nov 23 | Prepared examples, chart, and baseline prediction work |
-   | Nov 27 | Final model, if ready, is connected; performance panel is complete |
-   | Nov 30 | Stop adding features; check the presentation laptop and record a backup |
-   | Dec 1 | Rehearse the full presentation twice |
-   | Dec 2 | Present |
-
-   A six-minute presentation can spend one minute on the project, one minute on the data/model, two minutes demonstrating a correct and incorrect prediction, one minute on overall results, and one minute on limitations and teamwork.
-
-   Keep a short screen recording of a real working run as a fallback. If used, say it is recorded. Start the app and run one example before the presentation begins.
-
-   The required frontend files are just `app.py`, `.streamlit/config.toml`, and `requirements-frontend.txt`. Add a short startup note to the README once it works. CSV upload is an optional extra only after the prepared-example demo is reliable. There is no need for more features to deliver a good student presentation.
-
-Useful references: [Streamlit installation](https://docs.streamlit.io/get-started/installation/command-line), [theming](https://docs.streamlit.io/develop/concepts/configuration/theming), and [session state](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.session_state).
+   The final implementation needs only `app.py`, `.streamlit/config.toml`, and `requirements-frontend.txt`, plus the locally installed OpenFace executable and existing model. Keep all temporary uploads and extracted files out of Git.

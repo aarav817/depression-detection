@@ -1,35 +1,26 @@
-Give the frontend agent this instruction while it is opened in the repository:
+Use this prompt with an agent opened in the repository:
 
 ```text
-Build a simple, polished Streamlit frontend for our student project presentation
-on December 2. Read docs/FRONTEND_PLAN.md and inspect the existing code and local
-model/data files first. You already have the whole repository; reuse its code.
+Implement docs/FRONTEND_PLAN.md as a bare-bones Streamlit video demo.
+Read the existing code first. Build one app.py plus a simple theme and frontend
+requirements file. The UI is: upload MP4, optional video preview, Analyze button,
+then predicted dataset label, model score, valid-frame count, and optional runtime.
+No charts, sample menus, team schedules, separate APIs, or model explanation panels.
 
-Start with the saved logistic-regression model and summarize_visual() from
-src/dataset.py. Make one page with a prepared-example selector, a facial-movement
-line chart, an Analyze button, prediction/score/valid-frame cards, a separate
-Reveal dataset label button, and a small model-performance table.
+First locate/install and verify OpenFace FeatureExtraction on one real video.
+Do not claim the upload-to-result flow works until actual extraction succeeds.
+Call the executable with subprocess arguments and a timeout, using temporary
+folders. Check its CSV has the required AU columns and success field.
+Reuse summarize_visual() from src/dataset.py and the trusted existing artifact
+models/baseline/logistic_regression.joblib. Use its saved feature order,
+preprocessing, and threshold. Do not train or tune anything from the frontend.
 
-Use a light theme, white panels, dark text, and a teal accent. Native Streamlit
-components are enough. Keep the implementation primarily in app.py, with
-.streamlit/config.toml and requirements-frontend.txt. Do not add a separate API,
-React app, database, login, webcam feature, or elaborate architecture.
+Use a spinner, simple result cards, and session state. Clear stale predictions
+when the upload changes, and handle missing dependencies, bad videos, timeouts,
+and failed face tracking. Display a model score rather than a verified medical
+probability. Do not invent per-feature depression probabilities or fake results.
 
-Keep the true dataset label separate from prediction inputs. Reuse saved
-preprocessing, feature order, and threshold. Do not train or tune in the app.
-Use session state so results persist when revealing labels, and clear stale
-results when inputs change. Display real model outputs; do not invent scores.
-
-The other teammate owns training/testing and will supply the final model's
-working prediction code. Use the baseline now and connect the final model later
-if ready. Do not rewrite their training code. If ignored model/data files are
-missing, identify the exact files needed from the teammate.
-
-Work step by step: get a page running, style it, load examples/chart, connect
-real prediction, show results, then check the presentation workflow. Explain
-commands simply because we are new to frontend development. Preserve existing
-work and use a frontend-demo branch. Do not push or merge without authorization.
-
-At the end, give us the startup command and a short manual checklist. Prioritize
-a clean, reliable six-minute demonstration over extra features.
+Keep it simple. Explain the startup command and verify the actual upload,
+extraction, and prediction path. Preserve existing work and do not push or merge
+without authorization.
 ```
